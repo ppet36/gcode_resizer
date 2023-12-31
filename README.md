@@ -1,4 +1,4 @@
-# Gcode Resizer
+# GCode Resizer
 
 A simple utility to resize a GCode file and move it to the origin of 0.0. I use it to output from DrawingBot or Inkscape for my plotter. 
 
@@ -23,7 +23,10 @@ where sample.gcode will be fitted to 210x180mm or:
 ```
 ./gcode_resizer sample.gcode 150 >sample_converted.gcode
 ```
-where largest side of drawing will be 150mm.
+where largest side of drawing will be 150mm. Optionally you can rotate gcode file with parameter `--rotate` if you need. For example:
+```
+./gcode_resizer sample.gcode 180x210 --rotate >sample_rotated_converted.gcode
+```
 
 ## Limitations
 
