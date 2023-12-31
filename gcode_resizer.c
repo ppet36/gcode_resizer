@@ -22,6 +22,11 @@
 
 #define DMAX 99999999
 
+#define max(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a > _b ? _a : _b; })
+
 // The file is processed in two passes.
 // The first evaluates the size and displacement, and the second performs the transformation and writes the modified gcode.
 enum Mode {
@@ -47,7 +52,7 @@ enum State {
 // Structure filled for single command.
 struct GCodeCommand {
   char kw;
-  char cmd [32];
+  char cmd [16];
   uint8_t val_mask;
   double x;
   double y;
@@ -66,6 +71,7 @@ double min_y = DMAX;
 double multiplier = 1;
 double offset_x = 0;
 double offset_y = 0;
+bool rotate = false;
 
 char buffer [1024];
 int buffer_pos = 0;
@@ -76,40 +82,53 @@ void emit_command (struct GCodeCommand *cmd) {
   printf ("%c%s ", cmd->kw, cmd->cmd);
 
   if (cmd->val_mask & M_X) {
-    printf ("X%.5f", cmd->x);
+    printf ("X%.5f ", cmd->x);
   }
 
   if (cmd->val_mask & M_Y) {
-    printf ("Y%.5f", cmd->y);
+    printf ("Y%.5f ", cmd->y);
   }
 
   if (cmd->val_mask & M_Z) {
-    printf ("Z%.5f", cmd->z);
+    printf ("Z%.5f ", cmd->z);
   }
 
   if (cmd->val_mask & M_I) {
-    printf ("I%.5f", cmd->i);
+    printf ("I%.5f ", cmd->i);
   }
 
   if (cmd->val_mask & M_J) {
-    printf ("J%.5f", cmd->j);
+    printf ("J%.5f ", cmd->j);
   }
 
   if (cmd->val_mask & M_K) {
-    printf ("K%.5f", cmd->k);
+    printf ("K%.5f ", cmd->k);
   }
 
   if (cmd->val_mask & M_F) {
-    printf ("F%.2f", cmd->f);
+    printf ("F%.2f ", cmd->f);
   }
 
-  printf ("\n");
+  puts("");
 }
 
 // Processes command according to current mode.
 void process_command (struct GCodeCommand *cmd) {
+  double pom, x_ofs, x, y;
+  int g;
+
   switch (mode) {
     case PARSE :
+      if (cmd->kw == 'G') {
+        g = atoi(cmd->cmd);
+
+        if ((g != 1) && (g != 2) && (g != 3)) {
+          break;
+        }
+      } else {
+        break;
+      }
+
       if (cmd->val_mask & M_X) {
         if (cmd->x > max_x) {
           max_x = cmd->x;
@@ -127,12 +146,22 @@ void process_command (struct GCodeCommand *cmd) {
       }
     break;
     case RESIZE :
+      x = (cmd->x - offset_x) * multiplier;
+      y = (cmd->y - offset_y) * multiplier;
+
+      if (cmd->kw == 'G') {
+        if (atoi (cmd->cmd) == 0) {
+          x = max(0, x);
+          y = max(0, y);
+        }        
+      }
+
       if (cmd->val_mask & M_X) {
-        cmd->x *= multiplier;
+        cmd->x = x;
       }
 
       if (cmd->val_mask & M_Y) {
-        cmd->y *= multiplier;
+        cmd->y = y; ;
       }
 
       if (cmd->val_mask & M_I) {
@@ -143,6 +172,38 @@ void process_command (struct GCodeCommand *cmd) {
         cmd->j *= multiplier;
       }
 
+      if (rotate) {
+        x_ofs = (max_y - min_y) * multiplier;
+
+        if ((cmd->val_mask & M_X) && (cmd->val_mask & M_Y)) {
+          pom = cmd->x;
+          cmd->x = (cmd->y * -1.0) + x_ofs;
+          cmd->y = pom;
+        } else if (cmd->val_mask & M_X) {
+          cmd->y = cmd->x;
+          cmd->val_mask -= M_X;
+          cmd->val_mask |= M_Y;
+        } else if (cmd->val_mask & M_Y) {
+          cmd->x = (cmd->y * -1.0) + x_ofs;
+          cmd->val_mask -= M_Y;
+          cmd->val_mask |= M_X;
+        }
+
+        if ((cmd->val_mask & M_I) && (cmd->val_mask & M_J)) {
+          pom = cmd->i;
+          cmd->i = cmd->j * -1.0;
+          cmd->j = pom;
+        } else if (cmd->val_mask & M_I) {
+          cmd->j = cmd->i;
+          cmd->val_mask -= M_I;
+          cmd->val_mask |= M_J;
+        } else if (cmd->val_mask & M_J) {
+          cmd->i = cmd->j * -1.0;
+          cmd->val_mask -= M_J;
+          cmd->val_mask |= M_I;
+        }
+      }
+
       emit_command (cmd);
     break;
     case MAX : break;
@@ -150,7 +211,7 @@ void process_command (struct GCodeCommand *cmd) {
 }
 
 // Parse double. Adds character to buffer and if value is completed
-// returns true and fill value to val.
+// returns true and fill value to val at pointer.
 bool add_char_dbuffer (char ch, double *val) {
    if ((buffer_pos < 1) && isspace (ch)) {
      return false;
@@ -209,7 +270,7 @@ void parse_line (char *line) {
           case 'K' : case 'k' :
             state = K;
           break;
-          case ';' : case '(' :
+          case ';' : case '(' : case '%' :
             state = COMMENT;
           break;
           default :
@@ -268,7 +329,7 @@ void parse_line (char *line) {
       case K :
         if (add_char_dbuffer (ch, &gcmd.k)) {
           state = NORMAL;
-          gcmd.val_mask |= M_X;
+          gcmd.val_mask |= M_K;
           i--;
         }
       break;
@@ -304,7 +365,7 @@ int main (int argc, char** argv) {
 
   if (argc < 3) {
     fprintf (stderr, "A simple utility to resize the passed gcode to fill the requested dimensions. Gcode is also shifted to origin 0,0. The modified gcode is written to standard output.\n\n");
-    fprintf (stderr, "Usage: %s <gcode_file> <[reqSizeX]x[reqSizeY]> >out.gcode\n\n", argv[0]);
+    fprintf (stderr, "Usage: %s <gcode_file> <[reqSizeX]x[reqSizeY]> [--rotate] >out.gcode\n\n", argv[0]);
     fprintf (stderr, "Examples:\n\t%s sample.gcode 210x180 >mod.gcode\t# fit bounds into 210x180mm\n\t%s sample.gcode 180 >mod.gcode\t# longest side will be 180mm\n\n", argv[0], argv[0]);
     return 1;
   }
@@ -313,8 +374,15 @@ int main (int argc, char** argv) {
   file_name = argv[i++];
   req_size = argv[i++];
 
+  for (; i < argc; i++) {
+    if (!strcmp (argv[i], "--rotate")) {
+      rotate = true;
+    }
+  }
+
   token = strtok (req_size, delimiter);
   while (token) {
+    
     if (req_x < 1) {
       req_x = atof (token);
     } else if (req_y < 1) {
@@ -374,15 +442,20 @@ int main (int argc, char** argv) {
         d2 = req_y / (max_y - min_y);
       }
 
+      if (rotate) {
+        fputs ("Req:    Rotate\n", stderr);
+      }
+
       multiplier = (d1 > d2) ? d2 : d1;
-      offset_x = min_x * -1;
-      offset_y = min_y * -1;
+      offset_x = min_x;
+      offset_y = min_y;
 
       fprintf (stderr, "Mult:  %.10f\n", multiplier);
       fprintf (stderr, "Offs:  %.5fx%.5f\n", offset_x, offset_y);
+    } else {
+      fputs ("File successfully processed...\n", stderr);
     }
   }
 
   return 0;
 }
-
