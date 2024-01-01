@@ -27,6 +27,12 @@
        __typeof__ (b) _b = (b); \
      _a > _b ? _a : _b; })
 
+#define min(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a < _b ? _a : _b; })
+
+
 // The file is processed in two passes.
 // The first evaluates the size and displacement, and the second performs the transformation and writes the modified gcode.
 enum Mode {
@@ -75,7 +81,9 @@ uint8_t last_move_mask = 0x00;
 double multiplier = 1;
 double offset_x = 0;
 double offset_y = 0;
+
 bool rotate = false;
+bool resize = false;
 
 char buffer [1024];
 int buffer_pos = 0;
@@ -119,21 +127,13 @@ void emit_command (struct GCodeCommand *cmd) {
 // Updates min/max coordinates
 void update_min_max (double x, double y, uint8_t mask) {
   if (mask & M_X) {
-    if (x > max_x) {
-      max_x = x;
-    }
-    if (x < min_x) {
-      min_x = x;
-    }
+    max_x = max (x, max_x);
+    min_x = min (x, min_x);
   }
  
   if (mask & M_Y) {
-    if (y > max_y) {
-      max_y = y;
-    }
-    if (y < min_y) {
-      min_y = y;
-    }
+    max_y = max (y, max_y);
+    min_y = min (y, min_y);
   }
 }
 
@@ -164,30 +164,32 @@ void process_command (struct GCodeCommand *cmd) {
       update_min_max (cmd->x, cmd->y, cmd->val_mask);
     break;
     case RESIZE :
-      x = (cmd->x - offset_x) * multiplier;
-      y = (cmd->y - offset_y) * multiplier;
-
-      if (cmd->kw == 'G') {
-        if (atoi (cmd->cmd) == 0) {
-          x = max(0, x);
-          y = max(0, y);
-        }        
-      }
-
-      if (cmd->val_mask & M_X) {
-        cmd->x = x;
-      }
-
-      if (cmd->val_mask & M_Y) {
-        cmd->y = y;
-      }
-
-      if (cmd->val_mask & M_I) {
-        cmd->i *= multiplier;
-      }
-
-      if (cmd->val_mask & M_J) {
-        cmd->j *= multiplier;
+      if (resize) {
+        x = (cmd->x - offset_x) * multiplier;
+        y = (cmd->y - offset_y) * multiplier;
+ 
+        if (cmd->kw == 'G') {
+          if (atoi (cmd->cmd) == 0) {
+            x = max(0, x);
+            y = max(0, y);
+          }        
+        }
+ 
+        if (cmd->val_mask & M_X) {
+          cmd->x = x;
+        }
+ 
+        if (cmd->val_mask & M_Y) {
+          cmd->y = y;
+        }
+ 
+        if (cmd->val_mask & M_I) {
+          cmd->i *= multiplier;
+        }
+ 
+        if (cmd->val_mask & M_J) {
+          cmd->j *= multiplier;
+        }
       }
 
       if (rotate) {
@@ -368,59 +370,80 @@ void parse_line (char *line) {
 }
 
 
+void print_usage (char* command) {
+  fputs ("A simple utility to resize the passed gcode to fill the requested dimensions.\nGcode is also shifted to origin 0,0. The modified gcode is written to standard output.\n\n", stderr);
+  fprintf (stderr, "Usage: %s <gcode_file> [--resize <<reqSizeX[%%]>x[reqSizeY]>] [--rotate] >out.gcode\n\n", command);
+}
+
 // main()
 int main (int argc, char** argv) {
-  FILE *fp;
-  char* line = NULL;
-  char *file_name, *req_size, *token, *delimiter="x";
+  char *file_name = NULL, *req_size = NULL, *token, *delimiter="x", *line = NULL;
   int i;
   size_t len;
   ssize_t readed;
-  double req_x = 0;
-  double req_y = 0;
-  double req = 0;
-  double d1, d2;
+  double req_x = 0, req_y = 0, req = 0, d1, d2;
   bool percent = false;
+  FILE *fp;
 
-  if (argc < 3) {
-    fprintf (stderr, "A simple utility to resize the passed gcode to fill the requested dimensions. Gcode is also shifted to origin 0,0. The modified gcode is written to standard output.\n\n");
-    fprintf (stderr, "Usage: %s <gcode_file> <<reqSizeX[%%]>x[reqSizeY]> [--rotate] >out.gcode\n\n", argv[0]);
-    fprintf (stderr, "Examples:\n\t%s sample.gcode 210x180 >mod.gcode\t# fit bounds into 210x180mm\n\t%s sample.gcode 180 >mod.gcode\t# longest side will be 180mm\n\t%s sample.gcode 50%% >mod.gcode\t# percentual resize of gcode\n\n", argv[0], argv[0], argv[0]);
+  if (argc < 2) {
+    print_usage (argv[0]);
     return 1;
   }
 
-  i = 1;
-  file_name = argv[i++];
-  req_size = argv[i++];
-
-  for (; i < argc; i++) {
+  for (i = 1; i < argc; i++) {
     if (!strcmp (argv[i], "--rotate")) {
       rotate = true;
-    }
-  }
-
-  token = strtok (req_size, delimiter);
-  while (token) {
-    if (req_x < 1) {
-      if (strchr (token, '%')) {
-        percent = true;
+    } else if (!strcmp (argv[i], "--resize")) {
+      if (i < argc - 1) {
+        req_size = argv[++i];
+        resize = true;
+      } else {
+        fputs ("Parameter --resize requires size specification!\n", stderr);
+        print_usage (argv[0]);
+        return 1;
       }
-      req_x = atof (token);
-    } else if (req_y < 1) {
-      req_y = atof (token);
+    } else if (!strcmp (argv[i], "--help")) {
+      print_usage (argv[0]);
+      return 0;
+    } else if (file_name == NULL) {
+      file_name = argv[i];
+    } else {
+      fprintf (stderr, "Unexpected parameter %s!\n\n", argv[i]);
+      print_usage (argv[0]);
+      return 1;
     }
-    token = strtok (NULL, delimiter);
   }
 
-  if ((req_x < 1) && (req_y < 1)) {
-    fprintf (stderr, "Invalid size \"%s\" requested!\n", req_size);
+  if (!file_name) {
+    fputs ("No input file provided!\n\n", stderr);
+    print_usage (argv[0]);
     return 1;
   }
 
-  if (req_y < 1) {
-    req = req_x;
-    req_x = 0;
-    req_y = 0;
+  if (resize) {
+    token = strtok (req_size, delimiter);
+    while (token) {
+      if (req_x < 1) {
+        if (strchr (token, '%')) {
+          percent = true;
+        }
+        req_x = atof (token);
+      } else if (req_y < 1) {
+        req_y = atof (token);
+      }
+      token = strtok (NULL, delimiter);
+    }
+  
+    if ((req_x < 1) && (req_y < 1)) {
+      fprintf (stderr, "Invalid size \"%s\" requested!\n", req_size);
+      return 1;
+    }
+
+    if (req_y < 1) {
+      req = req_x;
+      req_x = 0;
+      req_y = 0;
+    }
   }
 
 
@@ -443,44 +466,46 @@ int main (int argc, char** argv) {
     fclose (fp);
 
     if (mode == PARSE) {
-      fprintf (stderr, "GCode: MinX=%.5f, MinY=%.5f\n", min_x, min_y);
-      fprintf (stderr, "GCode: MaxX=%.5f, MaxY=%.5f\n", max_x, max_y);
+      fprintf (stderr, "GCode:\tMinX=%.5f, MinY=%.5f\n", min_x, min_y);
+      fprintf (stderr, "GCode:\tMaxX=%.5f, MaxY=%.5f\n\n", max_x, max_y);
 
       if ((max_x < 1) || (max_y < 1) || (min_x > DMAX - 1) || (min_y > DMAX - 1)) {
         fprintf (stderr, "No moves in gcode file %s!\n", file_name);
         return 1;
       } 
 
-      if (req > 0) {
-        if (percent) {
-          fprintf (stderr, "Req:   %.2f%%\n", req);
-
-          d1 = d2 = req / 100.0;
+      if (resize) {
+        if (req > 0) {
+          if (percent) {
+            fprintf (stderr, "Req:\tResize %.2f%%\n", req);
+  
+            d1 = d2 = req / 100.0;
+          } else {
+            fprintf (stderr, "Req:\tResize MaxSide=%.5f\n", req);
+         
+            d1 = req / (max_x - min_x);
+            d2 = req / (max_y - min_y);
+          }
         } else {
-          fprintf (stderr, "Req:   MaxSide=%.5f\n", req);
-       
-          d1 = req / (max_x - min_x);
-          d2 = req / (max_y - min_y);
+          fprintf (stderr, "Req:\tResize MaxX=%.5f, MaxY=%.5f\n", req_x, req_y);
+  
+          d1 = req_x / (max_x - min_x);
+          d2 = req_y / (max_y - min_y);
         }
-      } else {
-        fprintf (stderr, "Req:   MaxX=%.5f, MaxY=%.5f\n", req_x, req_y);
 
-        d1 = req_x / (max_x - min_x);
-        d2 = req_y / (max_y - min_y);
+        multiplier = (d1 > d2) ? d2 : d1;
+        offset_x = min_x;
+        offset_y = min_y;
+ 
+        fprintf (stderr, "\t> Mult:  %.10f\n", multiplier);
+        fprintf (stderr, "\t> Offs:  %.5fx%.5f\n", offset_x, offset_y);
       }
 
       if (rotate) {
         fputs ("Req:    Rotate\n", stderr);
       }
-
-      multiplier = (d1 > d2) ? d2 : d1;
-      offset_x = min_x;
-      offset_y = min_y;
-
-      fprintf (stderr, "Mult:  %.10f\n", multiplier);
-      fprintf (stderr, "Offs:  %.5fx%.5f\n", offset_x, offset_y);
     } else {
-      fputs ("File successfully processed...\n", stderr);
+      fputs ("\nFile successfully processed...\n", stderr);
     }
   }
 
