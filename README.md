@@ -23,7 +23,11 @@ where sample.gcode will be fitted to 210x180mm or:
 ```
 ./gcode_resizer sample.gcode 150 >sample_converted.gcode
 ```
-where largest side of drawing will be 150mm. Optionally you can rotate gcode file with parameter `--rotate` if you need. For example:
+where largest side of drawing will be 150mm or for percent resize you can provide value as percent:
+```
+./gcode_resizer sample.gcode 50% >sample_converted.gcode
+```
+Optionally you can rotate gcode file with parameter `--rotate` if you need. For example:
 ```
 ./gcode_resizer sample.gcode 180x210 --rotate >sample_rotated_converted.gcode
 ```
