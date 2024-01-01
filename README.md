@@ -1,6 +1,6 @@
 # GCode Resizer
 
-A simple utility to resize a GCode file and move it to the origin of 0.0. I use it to output from DrawingBot or Inkscape for my plotter. 
+A simple utility to resize / scale a GCode file and move it to the origin of 0.0. I use it to output from DrawingBot or Inkscape for my plotter. 
 
 This C implementation does not load the file into memory and instead loops through it twice. The first time to find out the dimensions and displacement and the second time for the transformation itself. The resulting gcode is written to standard output. I created it because existing tools, mostly in Python, are very slow for large gcode files which specially DrawingBot produces.
 
