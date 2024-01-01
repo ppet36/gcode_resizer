@@ -68,6 +68,10 @@ double max_y = 0;
 double min_x = DMAX;
 double min_y = DMAX;
 
+double last_move_x = 0;
+double last_move_y = 0;
+uint8_t last_move_mask = 0x00;
+
 double multiplier = 1;
 double offset_x = 0;
 double offset_y = 0;
@@ -112,6 +116,27 @@ void emit_command (struct GCodeCommand *cmd) {
   puts("");
 }
 
+// Updates min/max coordinates
+void update_min_max (double x, double y, uint8_t mask) {
+  if (mask & M_X) {
+    if (x > max_x) {
+      max_x = x;
+    }
+    if (x < min_x) {
+      min_x = x;
+    }
+  }
+ 
+  if (mask & M_Y) {
+    if (y > max_y) {
+      max_y = y;
+    }
+    if (y < min_y) {
+      min_y = y;
+    }
+  }
+}
+
 // Processes command according to current mode.
 void process_command (struct GCodeCommand *cmd) {
   double pom, x_ofs, x, y;
@@ -123,27 +148,20 @@ void process_command (struct GCodeCommand *cmd) {
         g = atoi(cmd->cmd);
 
         if ((g != 1) && (g != 2) && (g != 3)) {
+          last_move_x = cmd->x;
+          last_move_y = cmd->y;
+          last_move_mask = cmd->val_mask;
+
           break;
+        } else {
+          update_min_max (last_move_x, last_move_y, last_move_mask);
+          last_move_mask = 0x00;
         }
       } else {
         break;
       }
 
-      if (cmd->val_mask & M_X) {
-        if (cmd->x > max_x) {
-          max_x = cmd->x;
-        } else if (cmd->x < min_x) {
-          min_x = cmd->x;
-        }
-      }
-    
-      if (cmd->val_mask & M_Y) {
-        if (cmd->y > max_y) {
-          max_y = cmd->y;
-        } else if (cmd->y < min_y) {
-          min_y = cmd->y;
-        }
-      }
+      update_min_max (cmd->x, cmd->y, cmd->val_mask);
     break;
     case RESIZE :
       x = (cmd->x - offset_x) * multiplier;
@@ -161,7 +179,7 @@ void process_command (struct GCodeCommand *cmd) {
       }
 
       if (cmd->val_mask & M_Y) {
-        cmd->y = y; ;
+        cmd->y = y;
       }
 
       if (cmd->val_mask & M_I) {
@@ -360,13 +378,14 @@ int main (int argc, char** argv) {
   ssize_t readed;
   double req_x = 0;
   double req_y = 0;
-  double req_side = 0;
+  double req = 0;
   double d1, d2;
+  bool percent = false;
 
   if (argc < 3) {
     fprintf (stderr, "A simple utility to resize the passed gcode to fill the requested dimensions. Gcode is also shifted to origin 0,0. The modified gcode is written to standard output.\n\n");
-    fprintf (stderr, "Usage: %s <gcode_file> <[reqSizeX]x[reqSizeY]> [--rotate] >out.gcode\n\n", argv[0]);
-    fprintf (stderr, "Examples:\n\t%s sample.gcode 210x180 >mod.gcode\t# fit bounds into 210x180mm\n\t%s sample.gcode 180 >mod.gcode\t# longest side will be 180mm\n\n", argv[0], argv[0]);
+    fprintf (stderr, "Usage: %s <gcode_file> <<reqSizeX[%%]>x[reqSizeY]> [--rotate] >out.gcode\n\n", argv[0]);
+    fprintf (stderr, "Examples:\n\t%s sample.gcode 210x180 >mod.gcode\t# fit bounds into 210x180mm\n\t%s sample.gcode 180 >mod.gcode\t# longest side will be 180mm\n\t%s sample.gcode 50%% >mod.gcode\t# percentual resize of gcode\n\n", argv[0], argv[0], argv[0]);
     return 1;
   }
 
@@ -382,8 +401,10 @@ int main (int argc, char** argv) {
 
   token = strtok (req_size, delimiter);
   while (token) {
-    
     if (req_x < 1) {
+      if (strchr (token, '%')) {
+        percent = true;
+      }
       req_x = atof (token);
     } else if (req_y < 1) {
       req_y = atof (token);
@@ -397,7 +418,7 @@ int main (int argc, char** argv) {
   }
 
   if (req_y < 1) {
-    req_side = req_x;
+    req = req_x;
     req_x = 0;
     req_y = 0;
   }
@@ -430,11 +451,17 @@ int main (int argc, char** argv) {
         return 1;
       } 
 
-      if (req_side > 0) {
-        fprintf (stderr, "Req:   MaxSide=%.5f\n", req_side);
+      if (req > 0) {
+        if (percent) {
+          fprintf (stderr, "Req:   %.2f%%\n", req);
 
-        d1 = req_side / (max_x - min_x);
-        d2 = req_side / (max_y - min_y);
+          d1 = d2 = req / 100.0;
+        } else {
+          fprintf (stderr, "Req:   MaxSide=%.5f\n", req);
+       
+          d1 = req / (max_x - min_x);
+          d2 = req / (max_y - min_y);
+        }
       } else {
         fprintf (stderr, "Req:   MaxX=%.5f, MaxY=%.5f\n", req_x, req_y);
 
