@@ -17,19 +17,19 @@ gcc gcode_resizer.c -o gcode_resizer
 It is very simple to use. The command is passed a gcode file and the required range to "fit" into. It is possible to pass only one dimension, then it will be the longer side of the resulting drawing.
 
 ```
-./gcode_resizer sample.gcode 210x180 >sample_converted.gcode
+./gcode_resizer sample.gcode --resize 210x180 >sample_converted.gcode
 ```
 where sample.gcode will be fitted to 210x180mm or:
 ```
-./gcode_resizer sample.gcode 150 >sample_converted.gcode
+./gcode_resizer sample.gcode --resize 150 >sample_converted.gcode
 ```
 where largest side of drawing will be 150mm or for percent resize you can provide value as percent:
 ```
-./gcode_resizer sample.gcode 50% >sample_converted.gcode
+./gcode_resizer sample.gcode --resize 50% >sample_converted.gcode
 ```
 Optionally you can rotate gcode file with parameter `--rotate` if you need. For example:
 ```
-./gcode_resizer sample.gcode 180x210 --rotate >sample_rotated_converted.gcode
+./gcode_resizer sample.gcode --resize 180x210 --rotate >sample_rotated_converted.gcode
 ```
 
 ## Limitations
